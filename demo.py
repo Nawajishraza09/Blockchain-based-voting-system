@@ -344,10 +344,10 @@ class AdminPanel(QMainWindow):
         layout = QVBoxLayout()
 
         # Voter ID Verification Section
-        self.voter_id_label = QLabel("Voter ID for Verification:")
-        self.voter_id_input = QLineEdit()
-        voter_id_validator = QRegularExpressionValidator(QRegularExpression(r"^[A-Za-z0-9]{6,10}$"))
-        self.voter_id_input.setValidator(voter_id_validator)
+        self.voter_verification_label = QLabel("Voter ID for Verification:")
+        self.voter_verification_input = QLineEdit()
+        voter_verification_validator = QRegularExpressionValidator(QRegularExpression(r"^[A-Za-z0-9]{6,10}$"))
+        self.voter_verification_input.setValidator(voter_verification_validator)
 
         self.verify_voter_button = QPushButton("Verify Voter")
         self.verify_voter_button.clicked.connect(self.verify_voter)
@@ -368,8 +368,8 @@ class AdminPanel(QMainWindow):
         self.load_candidate()
 
         # Add candidate radio buttons layout to main voting layout
-        layout.addWidget(self.voter_id_label)
-        layout.addWidget(self.voter_id_input)
+        layout.addWidget(self.voter_verification_label)
+        layout.addWidget(self.voter_verification_input)
         layout.addWidget(self.verify_voter_button)
         layout.addWidget(self.candidate_list_label)
         layout.addWidget(self.candidate_container)
