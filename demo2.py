@@ -5,6 +5,7 @@ import sqlite3
 import serial  # For R307 communication
 import time
 import datetime
+import json
 import hashlib
 import adafruit_fingerprint
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem, QLabel, QLineEdit, QFileDialog, QMessageBox, QRadioButton, QButtonGroup, QApplication
@@ -15,99 +16,184 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 from PIL import Image
 from PIL.ImageQt import ImageQt
-import json
 import base64
     
 # Configure logging
 logging.basicConfig(filename="action_logs.txt", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
                     
+class Block:
+    def __init__(self, index, timestamp, data, previous_hash, hash = None):
+        self.index = index
+        self.timestamp = timestamp
+        self.data = data
+        self.previous_hash = previous_hash
+        self.hash = hash or self.calculate_hash()
+
+    def calculate_hash(self):
+        block_string = f"{self.index}{self.timestamp}{self.data}{self.previous_hash}"
+        return hashlib.sha256(block_string.encode()).hexdigest()
+
 class Blockchain:
     def __init__(self):
         self.chain = []
-        self.voter_records = set()  # Track voters who have cast their vote
-        self.create_block(voter_id='Genesis', candidate_id='Genesis')  # Genesis block
+        self.load_blockchain()
 
-    def create_block(self, voter_id, candidate_id):
-        """Create a new block containing voter, candidate data validate validate double voting."""
+    def create_genesis_block(self):
+        """Create the first block in the blockchain."""
+        return Block(0, str(datetime.datetime.now()), "Genesis Block", "0")
+
+    def get_latest_block(self):
+        return self.chain[-1]
+
+    def add_block(self, data):
+        """Add a new block to the blockchain"""
         try:
-            # Check for double voting
-            if voter_id in self.voter_records:
-                logging.error(f"Double Voting Attempt Detected: Voter ID {voter_id}")
-                raise Exception(f"Double voting attempt detected for Voter ID {voter_id}")
-
-            # Prepare the block data
-            block = {
-                'index': len(self.chain) + 1,
-                'timestamp': str(datetime.datetime.now()),
-                'voter_id': voter_id,
-                'candidate_id': candidate_id,
-                'previous_hash': self.get_last_block_hash(),
-            }
-
-             # Calculate block's hash
-            block['hash'] = self.hash_block(block)
-
-            # Add block to the blockchain
-            self.chain.append(block)
-
-            # Record the voter as having cast their vote
-            self.voter_records.add(voter_id)
-
-            logging.info(f"Blockchain: New block created for Voter ID: {voter_id}, Candidate ID: {candidate_id}")
-            return block
+            latest_block = self.get_latest_block()
+            new_block = Block(
+                index=len(self.chain),
+                timestamp=str(datetime.datetime.now()),
+                data=data,
+                previous_hash=latest_block.hash,
+            )
+            self.chain.append(new_block)
+            self.save_blockchain()  # Save the updated blockchain
+            return new_block # Return the new block to indicate success
         except Exception as e:
-            QMessageBox.critical(None, "Blockchain Error", f"Failed to create blockchain block: {e}")
-            logging.error(f"Blockchain Error: Failed to create block - {e}")
-            return None
-
-    def get_last_block_hash(self):
-        """Retrieve the hash of the last block in the chain."""
-        if self.chain:
-            return self.chain[-1]['hash']
-        logging.warning("Blockchain is empty, returning '0' as the previous hash.")
-        return '0'
-
-    @staticmethod
-    def hash_block(block):
-        """Generate hash for a block."""
-        block_string = json.dumps(block, sort_keys=True).encode()
-        return hashlib.sha256(block_string).hexdigest()    
+            logging.error(f"Error adding block: {e}")
+            return None # Indicate failure
     
-    def generate_hash(self, voter_id, candidate_id, previous_hash, timestamp):
-        """Generate a SHA-256 hash for a block."""
-        block_string = f"{voter_id}{candidate_id}{previous_hash}{timestamp}"
-        return hashlib.sha256(block_string.encode('utf-8')).hexdigest()
-
-    def validate_chain(self):
-        """Validate the integrity of the blockchain."""
-        if len(self.chain) < 2:  # Only the Genesis block, no validation needed
-            return True
-
+    def is_chain_valid(self):
+        """Check if the blockchain is valid and integrity is maintained."""
         for i in range(1, len(self.chain)):
             current_block = self.chain[i]
             previous_block = self.chain[i - 1]
-            
-            # Recalculate the hash and compare
-            recalculated_hash = self.generate_hash(
-                current_block['voter_id'],
-                current_block['candidate_id'],
-                current_block['previous_hash'],
-                current_block['timestamp']
-            )
-            
-            # Check the current block's hash matches the stored hash
-            if current_block['hash'] != self.hash_block(current_block):
-                logging.error(f"Invalid block hash at index {i}")
+
+            # Check if the current block's hash is correct
+            if current_block.hash != current_block.calculate_hash():
+                logging.error(f"Blockchain Integrity Compromised: Block {current_block.index} has been tampered.")
+                QMessageBox.critical(self, "Blockchain Error", f"Blockchain Integrity Compromised: Block {current_block.index} has been tampered.")
                 return False
 
-            # Check that the previous block's hash matches the current block's previous_hash
-            if current_block['previous_hash'] != previous_block['hash']:
-                logging.error(f"Block linkage failed at index {i}")
+            # Check if the previous hash matches the hash of the previous block
+            if current_block.previous_hash != previous_block.hash:
+                logging.error(f"Blockchain Integrity Compromised: Block {current_block.index} has an invalid previous hash.")
+                QMessageBox.critical(self, "Blockchain Error", f"Blockchain Integrity Compromised: Block {current_block.index} has an invalid previous hash.")
                 return False
 
-        logging.info("Blockchain validation successful.")
-        # If all blocks are valid, return True
+        logging.info("Blockchain integrity verified: No tampering detected.")
         return True
+
+    def save_blockchain(self):
+        """Save the blockchain to a file."""
+        try:
+            with open("blockchain.json", "w") as file:
+                chain_data = [block.__dict__ for block in self.chain]
+                json.dump(chain_data, file, indent=4)
+            logging.info("Blockchain saved successfully.")
+        except Exception as e:
+            logging.error(f"Error saving blockchain: {e}")
+
+    def load_blockchain(self):
+        """Load the blockchain from a file."""
+        try:
+            with open("blockchain.json", "r") as file:
+                chain_data = json.load(file)
+                self.chain = [Block(**block) for block in chain_data]
+            logging.info("Blockchain loaded successfully.")
+        except FileNotFoundError:
+            logging.warning("Blockchain file not found. Creating a new genesis block.")
+            self.chain = [self.create_genesis_block()]
+        except Exception as e:
+            logging.error(f"Error loading blockchain: {e}")
+            self.chain = [self.create_genesis_block()]
+
+class BlockchainPanel(QWidget):
+    def __init__(self, blockchain_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Blockchain Data")
+        self.setGeometry(200, 100, 1200, 600)
+
+        layout = QVBoxLayout()
+        table = QTableWidget(len(blockchain_data), 5)
+        table.setHorizontalHeaderLabels(["Index", "Timestamp", "Data", "Hash", "Previous Hash"])
+
+        for row, block in enumerate(blockchain_data):
+            table.setItem(row, 0, QTableWidgetItem(str(block["Index"])))
+            table.setItem(row, 1, QTableWidgetItem(block["Timestamp"]))
+            table.setItem(row, 2, QTableWidgetItem(str(block["Data"])))
+            table.setItem(row, 3, QTableWidgetItem(block["Hash"]))
+            table.setItem(row, 4, QTableWidgetItem(block["Previous Hash"]))
+
+        table.resizeColumnsToContents()
+        layout.addWidget(table)
+        self.setLayout(layout)
+
+class ResultsPanel(QWidget):
+    """Popup window to display voting results as charts."""
+
+    def __init__(self, candidate_names, vote_counts, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Voting Results")
+        self.setGeometry(160, 80, 1200, 600)
+
+        # Layout for the popup
+        layout = QVBoxLayout()
+
+        # QLabel for bar chart
+        self.bar_chart_label = QLabel()
+        self.bar_chart_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.bar_chart_label)
+
+        # QLabel for pie chart
+        self.pie_chart_label = QLabel()
+        self.pie_chart_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.pie_chart_label)
+
+        self.setLayout(layout)
+
+        # Display the charts
+        self.display_charts(candidate_names, vote_counts)
+
+    def display_charts(self, candidate_names, vote_counts):
+        """Generate and display bar and pie charts."""
+        try:
+            # Bar Chart
+            plt.figure(figsize=(7, 3.5))
+            plt.bar(candidate_names, vote_counts, color='skyblue')
+            plt.title("Election Results", fontsize=16)
+            plt.xlabel("Candidates", fontsize=12)
+            plt.ylabel("Votes", fontsize=12)
+            plt.tight_layout()
+
+            # Save Bar Chart to a buffer
+            buffer = BytesIO()
+            plt.savefig(buffer, format="png")
+            buffer.seek(0)
+            bar_chart_image = Image.open(buffer)
+            pixmap_bar = QPixmap.fromImage(ImageQt(bar_chart_image))
+            self.bar_chart_label.setPixmap(pixmap_bar)  # Set the bar chart image
+            buffer.close()
+            plt.close()
+
+            # Pie Chart
+            colors = plt.cm.Paired(np.linspace(0, 1, len(vote_counts)))
+            plt.figure(figsize=(7, 3.5))
+            plt.pie(vote_counts, labels=candidate_names, autopct='%1.1f%%', startangle=140, colors=colors)
+            plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+            plt.title("Vote Share Per Candidate", fontsize=16)
+
+            # Save Pie Chart to a buffer
+            buffer = BytesIO()
+            plt.savefig(buffer, format="png")
+            buffer.seek(0)
+            pie_chart_image = Image.open(buffer)
+            pixmap_pie = QPixmap.fromImage(ImageQt(pie_chart_image))
+            self.pie_chart_label.setPixmap(pixmap_pie)  # Set the pie chart image
+            buffer.close()
+            plt.close()
+        except Exception as e:
+            logging.error(f"Error displaying charts: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to display charts: {e}")
 
 class AdminPanel(QMainWindow):
     def __init__(self):
@@ -119,16 +205,29 @@ class AdminPanel(QMainWindow):
         # Database connection
         try:
             self.conn = sqlite3.connect("voting_system.db")
-            self.create_tables() 
-            logging.info("Database connection established.")
+            self.create_tables() # Create tables if they don't exist
+            logging.info("Database connection established and schema validated.")
         except sqlite3.Error as e:
             logging.error(f"Database connection failed: {e}")
             QMessageBox.critical(self, "Error", f"Database connection failed: {e}")
             sys.exit()
 
         self.setWindowTitle("Voting System")
-        self.setGeometry(300, 100, 600, 400)
+        self.setGeometry(300, 100, 1000, 600)
         self.init_ui()
+    
+    def calculate_hash(self, data):
+        """Generate a SHA-256 hash for the given data."""
+        hash_object = hashlib.sha256(data.encode())
+        return hash_object.hexdigest()
+    
+    def enable_wal_mode(self):
+        """Enable Write-Ahead Logging (WAL) mode for SQLite."""
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            logging.info("Write-Ahead Logging (WAL) mode enabled.")
+        except Exception as e:
+            logging.error(f"Failed to enable WAL mode: {e}")
 
     def create_tables(self):
         """Create necessary tables for voters and candidates."""
@@ -143,16 +242,18 @@ class AdminPanel(QMainWindow):
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           voter_id INTEGER NOT NULL UNIQUE,
                           aadhaar_id INTEGER NOT NULL UNIQUE,
-                          name TEXT,
-                          fingerprint_location INTEGER UNIQUE)''')
+                          name TEXT NOT NULL,
+                          fingerprint_location INTEGER NOT NULL UNIQUE,
+                          record_hash TEXT NOT NULL UNIQUE)''')
 
             # Candidates table
             cursor.execute('''CREATE TABLE IF NOT EXISTS candidates (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           candidate_id INTEGER NOT NULL UNIQUE,
                           aadhaar_id INTEGER NOT NULL UNIQUE,
-                          name TEXT,
-                          party TEXT)''')
+                          name TEXT NOT NULL,
+                          party TEXT NOT NULL,
+                          record_hash TEXT NOT NULL UNIQUE)''')
 
             # Votes table
             cursor.execute('''CREATE TABLE IF NOT EXISTS votes (
@@ -160,6 +261,7 @@ class AdminPanel(QMainWindow):
                           voter_id INTEGER NOT NULL,
                           candidate_id INTEGER NOT NULL,
                           timestamp TEXT,
+                          record_hash TEXT NOT NULL UNIQUE,
                           FOREIGN KEY(voter_id) REFERENCES voters(voter_id),
                           FOREIGN KEY(candidate_id) REFERENCES candidates(candidate_id))''')
             self.conn.commit()
@@ -167,7 +269,7 @@ class AdminPanel(QMainWindow):
         except sqlite3.Error as e:
             logging.error(f"Database Error: {e}")
             QMessageBox.critical(self, "Database Error", f"Failed to create tables: {e}")
-    
+
     def init_ui(self):
         # Initializing the UI componenet
         self.tab_widget = QTabWidget()
@@ -176,19 +278,19 @@ class AdminPanel(QMainWindow):
         self.candidate_registration_tab = QWidget()
         self.voting_tab = QWidget()
         self.results_tab = QWidget()
-        self.validation_tab = QWidget()
+        self.blockchain_monitoring_tab = QWidget()
         
         self.init_voter_registration_tab()
         self.init_candidate_registration_tab()
         self.init_voting_tab()
         self.init_results_tab()
-        self.init_validation_tab()
+        self.init_blockchain_monitoring_tab()
         
         self.tab_widget.addTab(self.voter_registration_tab, "Voter Registration")
         self.tab_widget.addTab(self.candidate_registration_tab, "Candidate Registration")
         self.tab_widget.addTab(self.voting_tab, "Voting")
         self.tab_widget.addTab(self.results_tab, "Results")
-        self.tab_widget.addTab(self.validation_tab, "Validate Blockchain")
+        self.tab_widget.addTab(self.blockchain_monitoring_tab, "Monitor Blockchain")
 
         self.setCentralWidget(self.tab_widget) 
 
@@ -308,18 +410,26 @@ class AdminPanel(QMainWindow):
         self.results_tab.setLayout(layout)
 
     # Blockchain Validation Tab
-    def init_validation_tab(self):
+    def init_blockchain_monitoring_tab(self):
         """Initialize the blockchain validation tab."""
         layout = QVBoxLayout()
     
-        # Button to trigger blockchain validation
-        self.validate_button = QPushButton("Validate Blockchain")
-        self.validate_button.clicked.connect(self.validate_blockchain)
-    
-        layout.addWidget(self.validate_button)
-        self.validation_tab.setLayout(layout)
+        # Button to display the blockchain
+        self.View_blockchain_button = QPushButton("View Blockchain")
+        self.View_blockchain_button.clicked.connect(self.View_blockchain)
+        layout.addWidget(self.View_blockchain_button)
 
-        # Fingerprint sensor initialization with R307 module
+        self.check_integrity_button = QPushButton("Check Blockchain Integrity")
+        self.check_integrity_button.clicked.connect(self.check_blockchain_integrity)
+        layout.addWidget(self.check_integrity_button)
+
+        self.database_integrity_button = QPushButton("Check Database Integrity")
+        self.database_integrity_button.clicked.connect(self.verify_database_integrity)
+        layout.addWidget(self.database_integrity_button)
+
+        self.blockchain_monitoring_tab.setLayout(layout)
+
+    # Fingerprint sensor initialization with R307 module
     def initialize_fingerprint_sensor(self):
         if not hasattr(self, 'finger') or self.finger is None:
             try:
@@ -352,7 +462,7 @@ class AdminPanel(QMainWindow):
             QMessageBox.critical(self, "Sensor Error", f"Sensor not connected: {e}")
 
     def submit_voter_registration(self):
-        """Register voters and enroll their fingerprint to the database."""
+        """Register voters and enroll their fingerprint to the database only upon successful fingerprint enrollment."""
         voter_id = self.voter_id_input.text().strip()
         name = self.voter_name_input.text().strip()
         aadhaar_id = self.voter_aadhaar_id_input.text().strip()
@@ -366,29 +476,45 @@ class AdminPanel(QMainWindow):
             # use a unique location for fingerprint storage based on the voter ID
             location = hash(voter_id) % 1000  # Generate  a unique integer location (limit to 1000 IDs)
             if self.enroll_finger(location): # Attemt to enroll fingerprint
+
+                # Calculate hash for candidates
+                data = f"{voter_id}{aadhaar_id}{name}{location}"
+                record_hash = self.calculate_hash(data)
+
                 cursor = self.conn.cursor()
                 cursor.execute(
-                    "INSERT INTO voters (voter_id, aadhaar_id, name, fingerprint_location) VALUES (?, ?, ?, ?)",
-                    (voter_id, aadhaar_id, name, location)
+                    "INSERT INTO voters (voter_id, aadhaar_id, name, fingerprint_location, record_hash) VALUES (?, ?, ?, ?, ?)",
+                    (voter_id, aadhaar_id, name, location, record_hash)
                 )
                 self.conn.commit()
                 QMessageBox.information(self, "Success", "Voter registered successfully!")
 
-                # Clear inputs
+                # Clear inputs if success
                 self.voter_id_input.clear()
                 self.voter_aadhaar_id_input.clear()
                 self.voter_name_input.clear()
             else:
                 QMessageBox.critical(self, "Error", "Fingerprint enrollment failed.")
-        except sqlite3.IntegrityError:
-            QMessageBox.critical(self, "Database Error", "Voter ID or fingerprint location already exists.")
-            logging.error(f"Database Error: {e}")
+                
+        except sqlite3.IntegrityError as e:
+            QMessageBox.critical(self, "Database Error", f"Database Error: {e}.")
+            logging.error(f"IntegrityError: {e}")
+            self.conn.rollback()
+            # Clear inputs if fails
+            self.voter_id_input.clear()
+            self.voter_aadhaar_id_input.clear()
+            self.voter_name_input.clear()
         except Exception as e:
             logging.error(f"Error registering voter: {e}")
             QMessageBox.critical(self, "Error", f"Failed to register voter: {e}")
+            self.conn.rollback()
+            # Clear inputs if fails
+            self.voter_id_input.clear()
+            self.voter_aadhaar_id_input.clear()
+            self.voter_name_input.clear()
 
     def enroll_finger(self, location):
-        """Enroll a fingerprint at the given location."""
+        """Enroll multiple fingerprint for a voter."""
         try:
             self.check_sensor_connection()  # Ensure the sensor is connected and then initialized.
             QMessageBox.information(self, "Enrollment", "Place your finger on the sensor...")
@@ -404,7 +530,7 @@ class AdminPanel(QMainWindow):
 
             # Promt user to remove their finger
             QMessageBox.information(self, "Enrollment", "Remove your finger...")
-            time.sleep(1) # Add a small delay for clarity
+            time.sleep(0.5) # Add a small delay for clarity
             while self.finger.get_image() != adafruit_fingerprint.NOFINGER:
                 pass
 
@@ -447,7 +573,7 @@ class AdminPanel(QMainWindow):
                 QMessageBox.information(self, "Stored Templates", "No templates found on the sensor.")
         except Exception as e:
             logging.error(f"Error reading stored templates: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to read stored templates: {e}")       
+            QMessageBox.critical(self, "Error", f"Failed to read stored templates: {e}")
 
     def submit_candidate_registration(self):
         """Submit candidate registration details to the database."""
@@ -462,17 +588,21 @@ class AdminPanel(QMainWindow):
             return
 
         try:
+            # Calculate hash for candidates
+            data = f"{candidate_id}{candidate_aadhaar_id}{candidate_name}{candidate_party}"
+            record_hash = self.calculate_hash(data)
+
             # Insert data into database
             cursor = self.conn.cursor()
             cursor.execute(
-                "INSERT INTO candidates (candidate_id, aadhaar_id, name, party) VALUES (?, ?, ?, ?)",
-                (candidate_id, candidate_aadhaar_id, candidate_name, candidate_party)
+                "INSERT INTO candidates (candidate_id, aadhaar_id, name, party, record_hash) VALUES (?, ?, ?, ?, ?)",
+                (candidate_id, candidate_aadhaar_id, candidate_name, candidate_party, record_hash)
             )
             self.conn.commit()
             logging.info(f"Candidate Registration: Candidate ID {self.candidate_id_input.text()} registered successfully.")
             QMessageBox.information(self, "Success", "Candidate registered successfully.")
         
-            # Clear inputs
+            # Clear inputs if success
             self.candidate_id_input.clear()
             self.candidate_aadhaar_id_input.clear()
             self.candidate_name_input.clear()
@@ -480,15 +610,25 @@ class AdminPanel(QMainWindow):
         except sqlite3.IntegrityError:
             QMessageBox.warning(self, "Database Error", "Candidate ID or Aadhaar ID already exists.")
             logging.error("Duplicate candidate ID or Aadhaar ID registration attempt.")
+            self.conn.rollback()
+            # Clear inputs if fails
+            self.candidate_id_input.clear()
+            self.candidate_aadhaar_id_input.clear()
+            self.candidate_name_input.clear()
+            self.candidate_party_input.clear()
         except Exception as e:
             logging.error(f"Failed to register candidate: {e}")
             QMessageBox.critical(self, "Error", f"Failed to register candidate: {e}")
+            self.conn.rollback()
+            # Clear inputs if fails
+            self.candidate_id_input.clear()
+            self.candidate_aadhaar_id_input.clear()
+            self.candidate_name_input.clear()
+            self.candidate_party_input.clear()
 
     def verify_voter(self):
         """Verify voter using fingerprint."""
         try:
-            self.initialize_fingerprint_sensor()  # Ensure the sensor is initialized
-
             voter_id = self.voter_verification_input.text().strip()
 
             # Validate Voter ID
@@ -496,6 +636,8 @@ class AdminPanel(QMainWindow):
                 QMessageBox.warning(self, "Input Error", "Please enter a Voter ID for verification.")
                 logging.warning("Voter verification failed: No Voter ID entered.")
                 return
+
+            self.initialize_fingerprint_sensor()  # Ensure the sensor is initialized
 
             # Check if voter ID exists in the database
             cursor = self.conn.cursor()
@@ -536,9 +678,11 @@ class AdminPanel(QMainWindow):
             else:
                 QMessageBox.critical(self, "Error", "Fingerprint does not match.")
                 logging.warning("Fingerprint verification failed: No matching fingerprint found.")
+                self.clear_candidate()
         except Exception as e:
             logging.error(f"Error during fingerprint verification: {e}")
             QMessageBox.critical(self, "Error", f"Failed to verify voter: {e}")
+            self.clear_candidate()
 
     def load_candidate(self):
         """Load candidates from the database and create radio buttons for each candidate."""
@@ -619,50 +763,49 @@ class AdminPanel(QMainWindow):
                 self.cast_vote_button.setEnabled(False)
                 return
 
-            # Insert vote record into the database
-            timestamp = str(datetime.datetime.now())
-            new_block = self.blockchain.create_block(voter_id, candidate_id)
-            if new_block:
-                cursor.execute("INSERT INTO votes (voter_id, candidate_id, timestamp) VALUES (?, ?, ?)",
-                                (voter_id, candidate_id, timestamp))
-                self.conn.commit()
+            vote_data = {"voter_id": voter_id, "candidate_id": candidate_id}
 
-                # UI Updates
-                QMessageBox.information(self, "Vote Cast", "Your vote has been cast successfully!")
-                self.cast_vote_button.setEnabled(False)  # Disable voting button
-                self.voter_verification_input.clear()  # Clear voter ID input field
-                self.candidate_radio_group.setExclusive(False)  # Temporarily disable exclusivity
-                for button in self.candidate_radio_group.buttons():
-                    button.setChecked(False)  # Uncheck all radio buttons
-                self.candidate_radio_group.setExclusive(True)  # Re-enable exclusivity
-
-                logging.info(f"Vote Cast: Voter ID {voter_id} voted for Candidate ID {candidate_id}")
-            else:
+            # Insert vote record into the blockchain
+            new_block = self.blockchain.add_block(vote_data)
+            if new_block is None:  # Check if block creation failed
                 QMessageBox.critical(self, "Blockchain Error", "Failed to record vote on the blockchain.")
                 logging.error("Failed to add vote to the blockchain.")
+                return
+
+            # Insert vote record into the database
+            timestamp = str(datetime.datetime.now())
+
+            # Calculate hash for votes
+            data = f"{voter_id}{candidate_id}{timestamp}"
+            record_hash = self.calculate_hash(data)
+
+            cursor.execute("INSERT INTO votes (voter_id, candidate_id, timestamp, record_hash) VALUES (?, ?, ?, ?)",
+                            (voter_id, candidate_id, timestamp, record_hash))
+            self.conn.commit()
+
+            QMessageBox.information(self, "Success", "Vote cast successfully and recorded in blockchain.")
+
+            self.clear_candidate()
+            self.cast_vote_button.setEnabled(False)  # Disable voting button
+            self.voter_verification_input.clear()  # Clear voter ID input field
+            self.candidate_radio_group.setExclusive(False)  # Temporarily disable exclusivity
+            for button in self.candidate_radio_group.buttons():
+                button.setChecked(False)  # Uncheck all radio buttons
+            self.candidate_radio_group.setExclusive(True)  # Re-enable exclusivity
+
+            logging.info(f"Vote Cast: Voter ID {voter_id} voted for Candidate ID {candidate_id}")
 
         except sqlite3.Error as db_error:
             logging.error(f"Database Error: {db_error}")
             QMessageBox.critical(self, "Database Error", "An error occurred while recording your vote. Please try again.")
+            self.clear_candidate()
             self.conn.rollback()
         except Exception as e:
             logging.error(f"Unexpected Error: {e}")
             QMessageBox.critical(self, "Error", f"Failed to cast vote: {e}")
-
-    def validate_blockchain(self):
-        """Validate the blockchain integrity and display result."""
-        try:
-            is_valid = self.blockchain.validate_chain()
-            if is_valid:
-                QMessageBox.information(self, "Blockchain Validation", "Blockchain is valid and intact.")
-                logging.info("Blockchain validation successful: Chain is intact.")
-            else:
-                QMessageBox.critical(self, "Blockchain Validation", "Blockchain integrity compromised!")
-                logging.error("Blockchain validation failed: Chain integrity is compromised.")
-        except Exception as e:
-            logging.error(f"Error during blockchain validation: {e}")
-            QMessageBox.critical(self, "Error", "An error occurred while validating the blockchain.")
-
+            self.clear_candidate()
+            self.conn.rollback()
+    
     def display_results(self):
         """Display voting statistics as both bar chart and pie chart inside the application and save the charts."""
         try:
@@ -686,80 +829,87 @@ class AdminPanel(QMainWindow):
             vote_counts = [row[2] for row in result]
 
             # Open the ResultsPopup with the data
-            self.results_popup = ResultsPopup(candidate_names, vote_counts)
-            self.results_popup.show()
+            self.results_panel = ResultsPanel(candidate_names, vote_counts)
+            self.results_panel.show()
 
             logging.info("Results Viewed: Vote statistics displayed.")
         except Exception as e:
             logging.error(f"Results Display Error: {e}")
             QMessageBox.critical(self, "Error", f"Failed to display results: {e}")
 
-class ResultsPopup(QWidget):
-    """Popup window to display voting results as charts."""
-
-    def __init__(self, candidate_names, vote_counts, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Voting Results")
-        self.setGeometry(250, 80, 1000, 600)
-
-        # Layout for the popup
-        layout = QVBoxLayout()
-
-        # QLabel for bar chart
-        self.bar_chart_label = QLabel()
-        self.bar_chart_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.bar_chart_label)
-
-        # QLabel for pie chart
-        self.pie_chart_label = QLabel()
-        self.pie_chart_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.pie_chart_label)
-
-        self.setLayout(layout)
-
-        # Display the charts
-        self.display_charts(candidate_names, vote_counts)
-
-    def display_charts(self, candidate_names, vote_counts):
-        """Generate and display bar and pie charts."""
+    def View_blockchain(self):
+        """Display the enitre blockchain in the seperate window (UI)."""
         try:
-            # Bar Chart
-            plt.figure(figsize=(7, 3.5))
-            plt.bar(candidate_names, vote_counts, color='skyblue')
-            plt.title("Election Results", fontsize=16)
-            plt.xlabel("Candidates", fontsize=12)
-            plt.ylabel("Votes", fontsize=12)
-            plt.tight_layout()
-
-            # Save Bar Chart to a buffer
-            buffer = BytesIO()
-            plt.savefig(buffer, format="png")
-            buffer.seek(0)
-            bar_chart_image = Image.open(buffer)
-            pixmap_bar = QPixmap.fromImage(ImageQt(bar_chart_image))
-            self.bar_chart_label.setPixmap(pixmap_bar)  # Set the bar chart image
-            buffer.close()
-            plt.close()
-
-            # Pie Chart
-            colors = plt.cm.Paired(np.linspace(0, 1, len(vote_counts)))
-            plt.figure(figsize=(7, 3.5))
-            plt.pie(vote_counts, labels=candidate_names, autopct='%1.1f%%', startangle=140, colors=colors)
-            plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-            plt.title("Vote Share Per Candidate", fontsize=16)
-
-            # Save Pie Chart to a buffer
-            buffer = BytesIO()
-            plt.savefig(buffer, format="png")
-            buffer.seek(0)
-            pie_chart_image = Image.open(buffer)
-            pixmap_pie = QPixmap.fromImage(ImageQt(pie_chart_image))
-            self.pie_chart_label.setPixmap(pixmap_pie)  # Set the pie chart image
-            buffer.close()
-            plt.close()
+            blockchain_data = []
+            for block in self.blockchain.chain:
+                blockchain_data.append({
+                    "Index": block.index,
+                    "Timestamp": block.timestamp,
+                    "Data": block.data,
+                    "Hash": block.hash,
+                    "Previous Hash": block.previous_hash,
+                })
+                
+            # Display blockchain in a separate popup or table (as per UI design)
+            self.blockchain_window = BlockchainPanel(blockchain_data)
+            self.blockchain_window.show()
         except Exception as e:
-            logging.error(f"Error displaying charts: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to display charts: {e}")
+            logging.error(f"Error displaying blockchain: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to display blockchain: {e}")
+
+    def check_blockchain_integrity(self):
+        """Check and display blockchain integrity."""
+        try:
+            if self.blockchain.is_chain_valid():
+                QMessageBox.information(self, "Blockchain Integrity", "Blockchain integrity is valid. No tampering detected.")
+                logging.info("Blockchain integrity validated successfully.")
+            else:
+                QMessageBox.critical(self, "Blockchain Integrity", "Blockchain integrity is compromised!")
+                logging.warning("Blockchain integrity validation failed.")
+        except Exception as e:
+            logging.error(f"Blockchain Integrity Check Error: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to validate blockchain integrity: {e}")
+
+    def verify_database_integrity(self):
+        """Verify the integrity of database records."""
+        try:
+            cursor = self.conn.cursor()
+            
+            # Check voter records
+            cursor.execute("SELECT voter_id, aadhaar_id, name, fingerprint_location, record_hash FROM voters")
+            for row in cursor.fetchall():
+                voter_id, aadhaar_id, name, location, record_hash = row
+                data = f"{voter_id}{aadhaar_id}{name}{location}"
+                if self.calculate_hash(data) != record_hash:
+                    QMessageBox.critical(self, "Database Integrity", f"Data tampering detected for Voter ID {voter_id}, Aadhaar Id {aadhaar_id}, Name {name}.")
+                    logging.warning(f"Database tampering detected for Voter ID {voter_id} and Aadhaar Id {aadhaar_id}, Name {name}.")
+                    return
+
+            # Check candidate records
+            cursor.execute("SELECT candidate_id, aadhaar_id, name, party, record_hash FROM candidates")
+            for row in cursor.fetchall():
+                candidate_id, aadhaar_id, name, party, record_hash = row
+                data = f"{candidate_id}{aadhaar_id}{name}{party}"
+                if self.calculate_hash(data) != record_hash:
+                    QMessageBox.critical(self, "Database Integrity", f"Data tampering detected for Candidate ID {candidate_id}, Aadhaar Id {aadhaar_id}, Name {name}, Party {party}.")
+                    logging.warning(f"Database tampering detected for candidate ID {candidate_id} and Aadhaar Id {aadhaar_id}, Name {name}, Party {party}.")
+                    return
+
+            # Check votes records
+            cursor.execute("SELECT voter_id, candidate_id, timestamp, record_hash FROM votes")
+            for row in cursor.fetchall():
+                voter_id, candidate_id, timestamp, record_hash = row
+                data = f"{voter_id}{candidate_id}{timestamp}"
+                if self.calculate_hash(data) != record_hash:
+                    QMessageBox.critical(self, "Database Integrity", f"Data tampering detected for Candidate ID {candidate_id} and Voter Id {voter_id}.")
+                    logging.warning(f"Database tampering detected for Candidate ID {candidate_id} and Voter ID {voter_id}.")
+                    return
+
+            QMessageBox.information(self, "Database Integrity", "Database integrity is intact.")
+            logging.info("Database integrity validated successfully.")
+        except Exception as e:
+            logging.error(f"Database Integrity Check Error: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to verify database integrity: {e}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
