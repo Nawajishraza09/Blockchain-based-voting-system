@@ -15,7 +15,8 @@ Cryptographic Security:
 - SHA-256/512 hashing for ensuring document and vote integrity.
 
 Comprehensive User Management:
-- Voter registration includes Aadhaar ID, Voter ID, biometric fingerprint, photo, and signature, all securely stored. -> Candidate registration supports personal details, Aadhaar ID, Candidate ID, and party/group affiliation.
+- Voter registration includes Aadhaar ID, Voter ID, biometric fingerprint, photo, and signature, all securely stored.
+- Candidate registration supports personal details, Aadhaar ID, Candidate ID, and party/group affiliation.
 
 Intuitive GUI:
 - Developed using PySide6 and PySide6-designer for a user-friendly experience.
