@@ -37,7 +37,7 @@ Admin Controls:
 
 # Technologies Used
 
-- Programming Language: Python 3.12
+- Programming Language: Python 3.7.12
 - GUI Framework: PySide6
 - Database: SQLite
 - Blockchain: (Implementation specific details here, e.g., Ethereum, Hyperledger, or custom blockchain logic)
