@@ -45,7 +45,7 @@ Admin Controls:
 - Cryptographic Tools: PyCrypto or similar libraries for RSA/ECC and SHA-256/512
 - Validation: QRegularExpressionValidator for input validation
 
-# Setup
+# Setup/Run
 
 - Clone the repository: git clone or download the file
 
