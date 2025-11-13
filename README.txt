@@ -1,6 +1,6 @@
-Blockchain-Based Secure Voting System
+Blockchain-Based Voting System
 
-This project is a Blockchain-Based Secure Voting System designed to ensure the integrity, transparency, and security of the voting process using modern cryptographic techniques and biometric authentication.
+This project is a Blockchain-Based Voting System designed to ensure the integrity, transparency, and security of the voting process using modern cryptographic techniques and biometric authentication.
 Key Features
 
 1. Blockchain Integration:
