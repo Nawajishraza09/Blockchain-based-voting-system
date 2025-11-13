@@ -3,9 +3,9 @@ This project is a Blockchain-Based Voting System designed to ensure the integrit
 
 # Key Features:-
 
-# Blockchain Integration:-
--> Ensures secure and immutable records of votes.
--> Provides transparency and resistance to tampering.
+Blockchain Integration:-
+- Ensures secure and immutable records of votes.
+- Provides transparency and resistance to tampering.
 
 # Biometric Authentication:- 
 -> Voter and admin authentication using the R307 optical fingerprint reader for secure identity verification.
